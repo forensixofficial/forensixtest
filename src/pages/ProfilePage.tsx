@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import Navigation from '../components/Navigation';
 import { 
-  User,
+  User as UserIcon,
   Mail,
   Lock,
   Eye,
@@ -19,14 +19,13 @@ import {
   Edit3,
   Calendar,
   UserCheck,
-  LogOut,
   Loader,
   RefreshCw
 } from 'lucide-react';
 
 const ProfilePage = () => {
   const navigate = useNavigate();
-  const { user, profile, updateProfile, signOut, loading } = useAuth();
+  const { user, profile, updateProfile, signOut, loading: authLoading } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
@@ -35,8 +34,6 @@ const ProfilePage = () => {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successMessage, setSuccessMessage] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [profileData, setProfileData] = useState<any>(null);
-  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -50,61 +47,24 @@ const ProfilePage = () => {
 
   // Redirect if not logged in
   useEffect(() => {
-    if (!loading && !user) {
+    if (!authLoading && !user) {
       navigate('/login');
-      return;
     }
-  }, [user, loading, navigate]);
+  }, [user, authLoading, navigate]);
 
-  // Fetch profile data directly
+  // Populate form data when profile or user changes
   useEffect(() => {
-    const fetchProfileData = async () => {
-      if (!user) return;
-
-      try {
-        console.log('Fetching profile for user:', user.id);
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-
-        if (error) {
-          if (error.code === 'PGRST116') {
-            console.log('No profile found, user needs to create one');
-            setProfileData(null);
-          } else {
-            console.error('Error fetching profile:', error);
-            setErrors({ general: 'Failed to load profile data' });
-          }
-        } else {
-          console.log('Profile data loaded:', data);
-          setProfileData(data);
-        }
-      } catch (error) {
-        console.error('Error in fetchProfileData:', error);
-        setErrors({ general: 'Failed to load profile data' });
-      }
-    };
-
-    if (user && !loading) {
-      fetchProfileData();
-    }
-  }, [user, loading]);
-
-  // Populate form data when profile loads
-  useEffect(() => {
-    if (profileData && user) {
+    if (profile && user) {
       setFormData({
-        firstName: profileData.first_name || '',
-        lastName: profileData.last_name || '',
-        username: profileData.username || '',
+        firstName: profile.first_name || '',
+        lastName: profile.last_name || '',
+        username: profile.username || '',
         email: user.email || '',
         currentPassword: '',
         newPassword: '',
         confirmPassword: ''
       });
-    } else if (user && !profileData) {
+    } else if (user && !profile) {
       // Set default values for new profile
       setFormData({
         firstName: '',
@@ -116,7 +76,7 @@ const ProfilePage = () => {
         confirmPassword: ''
       });
     }
-  }, [profileData, user]);
+  }, [profile, user]);
 
   // Scroll to top when component mounts
   useEffect(() => {
@@ -176,52 +136,6 @@ const ProfilePage = () => {
     return Object.keys(newErrors).length === 0;
   };
 
-  const createProfile = async () => {
-    if (!user || !validateForm()) return;
-
-    setIsCreatingProfile(true);
-    setErrors({});
-
-    try {
-      const profileData = {
-        id: user.id,
-        username: formData.username,
-        first_name: formData.firstName || null,
-        last_name: formData.lastName || null,
-        email: user.email || formData.email,
-      };
-
-      console.log('Creating profile with data:', profileData);
-
-      const { data, error } = await supabase
-        .from('profiles')
-        .insert(profileData)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error creating profile:', error);
-        if (error.message.includes('duplicate key value violates unique constraint')) {
-          setErrors({ username: 'Username is already taken' });
-        } else {
-          setErrors({ general: error.message });
-        }
-        return;
-      }
-
-      console.log('Profile created successfully:', data);
-      setProfileData(data);
-      setSuccessMessage('Profile created successfully!');
-      setIsEditing(false);
-
-    } catch (error: any) {
-      console.error('Error creating profile:', error);
-      setErrors({ general: 'Failed to create profile. Please try again.' });
-    } finally {
-      setIsCreatingProfile(false);
-    }
-  };
-
   const handleSave = async () => {
     if (!validateForm()) return;
 
@@ -230,19 +144,13 @@ const ProfilePage = () => {
     setSuccessMessage('');
 
     try {
-      if (!profileData) {
-        // Create new profile
-        await createProfile();
-        return;
-      }
-
-      // Update existing profile
-      const profileUpdates: any = {
+      const profileUpdates = {
         username: formData.username,
         first_name: formData.firstName || null,
         last_name: formData.lastName || null,
       };
 
+      // Update profile
       const { error: profileError } = await updateProfile(profileUpdates);
 
       if (profileError) {
@@ -274,15 +182,7 @@ const ProfilePage = () => {
         }));
       }
 
-      // Update local profile data
-      setProfileData(prev => ({
-        ...prev,
-        username: formData.username,
-        first_name: formData.firstName || null,
-        last_name: formData.lastName || null,
-      }));
-
-      setSuccessMessage('Profile updated successfully!');
+      setSuccessMessage(profile ? 'Profile updated successfully!' : 'Profile created successfully!');
       setIsEditing(false);
 
     } catch (error: any) {
@@ -318,35 +218,8 @@ const ProfilePage = () => {
     });
   };
 
-  const refreshProfile = async () => {
-    if (!user) return;
-
-    setIsLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error refreshing profile:', error);
-        setErrors({ general: 'Failed to refresh profile data' });
-      } else {
-        setProfileData(data);
-        if (data) {
-          setSuccessMessage('Profile data refreshed!');
-        }
-      }
-    } catch (error) {
-      console.error('Error refreshing profile:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   // Show loading spinner while auth is loading
-  if (loading) {
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
         <div className="text-center">
@@ -381,7 +254,7 @@ const ProfilePage = () => {
               <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/10 via-blue-500/10 to-purple-500/10 rounded-3xl blur-2xl group-hover:blur-xl transition-all duration-500"></div>
               <div className="relative bg-gradient-to-r from-gray-900/80 via-gray-800/80 to-gray-900/80 border border-cyan-500/20 rounded-3xl p-8 backdrop-blur-sm">
                 <div className="flex items-center justify-center space-x-4 mb-4">
-                  <User className="h-12 w-12 text-cyan-400" />
+                  <UserIcon className="h-12 w-12 text-cyan-400" />
                   <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
                     Profile Settings
                   </h1>
@@ -410,7 +283,7 @@ const ProfilePage = () => {
           )}
 
           {/* No Profile Found - Create Profile */}
-          {!profileData && !isCreatingProfile && (
+          {!profile && !authLoading && (
             <div className="relative group mb-8">
               <div className="absolute inset-0 bg-gradient-to-r from-yellow-500/10 to-orange-500/10 rounded-xl blur-xl"></div>
               <div className="relative bg-gray-900/80 border border-yellow-500/30 rounded-xl p-8 backdrop-blur-sm text-center">
@@ -424,16 +297,8 @@ const ProfilePage = () => {
                     onClick={() => setIsEditing(true)}
                     className="bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 px-6 py-3 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 shadow-lg shadow-cyan-500/25 flex items-center space-x-2"
                   >
-                    <User className="h-5 w-5" />
+                    <UserIcon className="h-5 w-5" />
                     <span>Create Profile</span>
-                  </button>
-                  <button
-                    onClick={refreshProfile}
-                    disabled={isLoading}
-                    className="border border-gray-600 hover:border-gray-500 hover:bg-gray-800/50 px-6 py-3 rounded-lg font-semibold transition-all duration-300 flex items-center space-x-2"
-                  >
-                    <RefreshCw className={`h-5 w-5 ${isLoading ? 'animate-spin' : ''}`} />
-                    <span>Refresh</span>
                   </button>
                 </div>
               </div>
@@ -442,32 +307,32 @@ const ProfilePage = () => {
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Profile Info Card */}
-            {profileData && (
+            {profile && (
               <div className="lg:col-span-1">
                 <div className="relative group">
                   <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 to-cyan-500/10 rounded-xl blur-xl"></div>
                   <div className="relative bg-gray-900/80 border border-gray-700/50 rounded-xl p-6 backdrop-blur-sm">
                     <div className="text-center">
                       <div className="w-24 h-24 bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <User className="h-12 w-12 text-white" />
+                        <UserIcon className="h-12 w-12 text-white" />
                       </div>
                       <h3 className="text-xl font-bold text-white mb-2">
-                        {profileData.first_name && profileData.last_name 
-                          ? `${profileData.first_name} ${profileData.last_name}`
-                          : profileData.username || 'User'
+                        {profile.first_name && profile.last_name 
+                          ? `${profile.first_name} ${profile.last_name}`
+                          : profile.username || 'User'
                         }
                       </h3>
-                      <p className="text-gray-400 mb-4">@{profileData.username || 'username'}</p>
+                      <p className="text-gray-400 mb-4">@{profile.username || 'username'}</p>
                       
                       <div className="space-y-3 text-sm">
                         <div className="flex items-center justify-center space-x-2">
                           <Mail className="h-4 w-4 text-gray-400" />
                           <span className="text-gray-300">{user.email}</span>
                         </div>
-                        {profileData.created_at && (
+                        {profile.created_at && (
                           <div className="flex items-center justify-center space-x-2">
                             <Calendar className="h-4 w-4 text-gray-400" />
-                            <span className="text-gray-300">Joined {formatDate(profileData.created_at)}</span>
+                            <span className="text-gray-300">Joined {formatDate(profile.created_at)}</span>
                           </div>
                         )}
                       </div>
@@ -485,15 +350,15 @@ const ProfilePage = () => {
             )}
 
             {/* Profile Form */}
-            <div className={profileData ? "lg:col-span-2" : "lg:col-span-3"}>
+            <div className={profile ? "lg:col-span-2" : "lg:col-span-3"}>
               <div className="relative group">
                 <div className="absolute inset-0 bg-gradient-to-r from-gray-500/10 to-gray-600/10 rounded-xl blur-xl"></div>
                 <div className="relative bg-gray-900/80 border border-gray-700/50 rounded-xl p-8 backdrop-blur-sm">
                   <div className="flex items-center justify-between mb-8">
                     <h2 className="text-2xl font-bold text-white">
-                      {profileData ? 'Account Information' : 'Create Your Profile'}
+                      {profile ? 'Account Information' : 'Create Your Profile'}
                     </h2>
-                    {profileData && (
+                    {profile && (
                       <button
                         onClick={() => setIsEditing(!isEditing)}
                         className="flex items-center space-x-2 text-cyan-400 hover:text-cyan-300 transition-colors"
@@ -517,9 +382,9 @@ const ProfilePage = () => {
                           name="firstName"
                           value={formData.firstName}
                           onChange={handleInputChange}
-                          disabled={!isEditing && profileData}
+                          disabled={!isEditing && profile}
                           className={`w-full bg-gray-800/50 border rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none transition-colors ${
-                            (isEditing || !profileData) ? 'border-gray-600 focus:border-cyan-400' : 'border-gray-700 cursor-not-allowed'
+                            (isEditing || !profile) ? 'border-gray-600 focus:border-cyan-400' : 'border-gray-700 cursor-not-allowed'
                           }`}
                           placeholder="John"
                         />
@@ -535,9 +400,9 @@ const ProfilePage = () => {
                           name="lastName"
                           value={formData.lastName}
                           onChange={handleInputChange}
-                          disabled={!isEditing && profileData}
+                          disabled={!isEditing && profile}
                           className={`w-full bg-gray-800/50 border rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none transition-colors ${
-                            (isEditing || !profileData) ? 'border-gray-600 focus:border-cyan-400' : 'border-gray-700 cursor-not-allowed'
+                            (isEditing || !profile) ? 'border-gray-600 focus:border-cyan-400' : 'border-gray-700 cursor-not-allowed'
                           }`}
                           placeholder="Doe"
                         />
@@ -555,9 +420,9 @@ const ProfilePage = () => {
                         name="username"
                         value={formData.username}
                         onChange={handleInputChange}
-                        disabled={!isEditing && profileData}
+                        disabled={!isEditing && profile}
                         className={`w-full bg-gray-800/50 border rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none transition-colors ${
-                          (isEditing || !profileData)
+                          (isEditing || !profile)
                             ? errors.username 
                               ? 'border-red-500 focus:border-red-400' 
                               : 'border-gray-600 focus:border-cyan-400'
@@ -581,7 +446,7 @@ const ProfilePage = () => {
                         name="email"
                         value={formData.email}
                         onChange={handleInputChange}
-                        disabled={true} // Email changes should be handled separately
+                        disabled={true}
                         className="w-full bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 cursor-not-allowed"
                         placeholder="john@example.com"
                       />
@@ -591,7 +456,7 @@ const ProfilePage = () => {
                     </div>
 
                     {/* Password Change Section */}
-                    {(isEditing || !profileData) && profileData && (
+                    {(isEditing || !profile) && profile && (
                       <div className="pt-6 border-t border-gray-700">
                         <h3 className="text-lg font-semibold text-white mb-4">Change Password</h3>
                         <div className="space-y-4">
@@ -692,23 +557,23 @@ const ProfilePage = () => {
                     )}
 
                     {/* Action Buttons */}
-                    {(isEditing || !profileData) && (
+                    {(isEditing || !profile) && (
                       <div className="flex flex-col sm:flex-row gap-4 pt-6">
                         <button
                           type="button"
                           onClick={handleSave}
-                          disabled={isLoading || isCreatingProfile}
+                          disabled={isLoading}
                           className="flex-1 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 disabled:from-gray-600 disabled:to-gray-700 px-6 py-3 rounded-lg font-semibold transition-all duration-300 transform hover:scale-105 shadow-lg shadow-cyan-500/25 flex items-center justify-center space-x-2 disabled:cursor-not-allowed disabled:transform-none"
                         >
-                          {(isLoading || isCreatingProfile) ? (
+                          {isLoading ? (
                             <>
                               <Loader className="h-5 w-5 animate-spin" />
-                              <span>{profileData ? 'Saving...' : 'Creating...'}</span>
+                              <span>{profile ? 'Saving...' : 'Creating...'}</span>
                             </>
                           ) : (
                             <>
                               <Save className="h-5 w-5" />
-                              <span>{profileData ? 'Save Changes' : 'Create Profile'}</span>
+                              <span>{profile ? 'Save Changes' : 'Create Profile'}</span>
                             </>
                           )}
                         </button>
@@ -721,7 +586,7 @@ const ProfilePage = () => {
           </div>
 
           {/* Danger Zone */}
-          {profileData && (
+          {profile && (
             <div className="relative group mt-12">
               <div className="absolute inset-0 bg-gradient-to-r from-red-500/10 to-orange-500/10 rounded-xl blur-xl"></div>
               <div className="relative bg-gray-900/80 border border-red-500/30 rounded-xl p-8 backdrop-blur-sm">
